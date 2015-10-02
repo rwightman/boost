@@ -179,12 +179,19 @@ void test_areal()
         geos_1[0], geos_1[1],
             1, -1, 3461.0214843, 0.005); // MSVC 14 reports 3461.025390625
 
+    // Expectations:
+    // In most cases: 0 (no intersection)
+    // In some cases: 1.430511474609375e-05 (clang/gcc on Xubuntu using b2)
+    // In some cases: 5.6022983000000002e-05 (powerpc64le-gcc-6-0)
     test_one<Polygon, Polygon, Polygon>("geos_2",
         geos_2[0], geos_2[1],
-            0, 0, 0.0);
+            0, 0, 6.0e-5, -1.0); // -1 denotes: compare with <=
+
+#if ! defined(BOOST_GEOMETRY_NO_ROBUSTNESS)
     test_one<Polygon, Polygon, Polygon>("geos_3",
         geos_3[0], geos_3[1],
-            0, -0, 0.0);
+            0, 0, 0.0);
+#endif
     test_one<Polygon, Polygon, Polygon>("geos_4",
         geos_4[0], geos_4[1],
             1, -1, 0.08368849);
@@ -203,13 +210,25 @@ void test_areal()
             if_typed<ct, float>(1.0, 0.01));
     }
 
+    // SQL Server reports: 0.400390625
+    // PostGIS reports 0.4
+    // BG did report 0.4 but is changed to 0.397
+    // when selecting other IP closer at endpoint or if segment B is smaller than A
     test_one<Polygon, Polygon, Polygon>("ggl_list_20110307_javier",
         ggl_list_20110307_javier[0], ggl_list_20110307_javier[1],
-        1, 4, 0.4, 0.01);
+        1, 4,
+        #if defined(BOOST_GEOMETRY_NO_ROBUSTNESS)
+            0.40
+        #else
+            0.397162651, 0.01
+        #endif
+            );
 
+#if ! defined(BOOST_GEOMETRY_NO_ROBUSTNESS)
     test_one<Polygon, Polygon, Polygon>("ggl_list_20110627_phillip",
         ggl_list_20110627_phillip[0], ggl_list_20110627_phillip[1],
         1, if_typed_tt<ct>(6, 5), 11151.6618);
+#endif
 
     test_one<Polygon, Polygon, Polygon>("ggl_list_20110716_enrico",
         ggl_list_20110716_enrico[0], ggl_list_20110716_enrico[1],
@@ -221,7 +240,7 @@ void test_areal()
 
     test_one<Polygon, Polygon, Polygon>("ggl_list_20140223_shalabuda",
         ggl_list_20140223_shalabuda[0], ggl_list_20140223_shalabuda[1],
-        1, 4, 3.77106);
+        1, 4, 3.77106, 0.001);
 
 #if 0
     // TODO: fix this testcase, it should give 0 but instead it gives one of the input polygons
@@ -241,7 +260,7 @@ void test_areal()
 
 #if ! defined(BOOST_GEOMETRY_NO_ROBUSTNESS)
     test_one<Polygon, Polygon, Polygon>("ticket_8254", ticket_8254[0], ticket_8254[1],
-                1, 4, 3.6334e-08, 0.01);
+                1, 4, 3.635930e-08, 0.01);
 #endif
 
     test_one<Polygon, Polygon, Polygon>("ticket_6958", ticket_6958[0], ticket_6958[1],
@@ -266,9 +285,14 @@ void test_areal()
     test_one<Polygon, Polygon, Polygon>("ticket_10108_a",
                 ticket_10108_a[0], ticket_10108_a[1],
                 0, 0, 0.0);
+
+#if ! defined(BOOST_GEOMETRY_NO_ROBUSTNESS)
+    // msvc  5.6023011e-5
+    // mingw 5.6022954e-5
     test_one<Polygon, Polygon, Polygon>("ticket_10108_b",
                 ticket_10108_b[0], ticket_10108_b[1],
-                0, 0, 0.0);
+                0, 0, 5.6022983e-5);
+#endif
 
     test_one<Polygon, Polygon, Polygon>("ticket_10747_a",
                 ticket_10747_a[0], ticket_10747_a[1],
@@ -358,6 +382,7 @@ void test_boxes(std::string const& wkt1, std::string const& wkt2, double expecte
     bg::read_wkt(wkt2, box2);
 
     Box box_out;
+    bg::assign_zero(box_out);
     bool detected = bg::intersection(box1, box2, box_out);
     typename bg::default_area_result<Box>::type area = bg::area(box_out);
 
@@ -433,6 +458,38 @@ void test_areal_linear()
 
 }
 
+
+template <typename Linestring, typename Box>
+void test_linear_box()
+{
+    typedef bg::model::multi_linestring<Linestring> multi_linestring_type;
+
+    test_one_lp<Linestring, Box, Linestring>
+        ("case-l-b-01",
+         "BOX(-10 -10,10 10)",
+         "LINESTRING(-20 -20, 0 0,20 20)",
+         1, 3, 20 * sqrt(2.0));
+
+    test_one_lp<Linestring, Box, Linestring>
+        ("case-l-b-02",
+         "BOX(-10 -10,10 10)",
+         "LINESTRING(-20 -20, 20 20)",
+         1, 2, 20.0 * sqrt(2.0));
+
+    test_one_lp<Linestring, Box, Linestring>
+        ("case-l-b-02",
+         "BOX(-10 -10,10 10)",
+         "LINESTRING(-20 -20, 20 20,15 0,0 -15)",
+         2, 4, 25.0 * sqrt(2.0));
+
+    test_one_lp<Linestring, Box, multi_linestring_type>
+        ("case-ml-b-01",
+         "BOX(-10 -10,10 10)",
+         "MULTILINESTRING((-20 -20, 20 20),(0 -15,15 0))",
+         2, 4, 25.0 * sqrt(2.0));
+}
+
+
 template <typename P>
 void test_all()
 {
@@ -454,6 +511,8 @@ void test_all()
     test_areal_linear<polygon_ccw, linestring>();
     test_areal_linear<polygon_ccw_open, linestring>();
 #endif
+
+    test_linear_box<linestring, box>();
 
     // Test polygons clockwise and counter clockwise
     test_areal<polygon>();
@@ -545,7 +604,7 @@ void test_pointer_version()
     bg::detail::intersection::intersection_insert<output_type>(box, ln, std::back_inserter(clip));
 
     double length = 0;
-    int n = 0;
+    std::size_t n = 0;
     for (std::vector<output_type>::const_iterator it = clip.begin();
             it != clip.end(); ++it)
     {
@@ -554,10 +613,10 @@ void test_pointer_version()
     }
 
     BOOST_CHECK_EQUAL(clip.size(), 1u);
-    BOOST_CHECK_EQUAL(n, 2);
+    BOOST_CHECK_EQUAL(n, 2u);
     BOOST_CHECK_CLOSE(length, sqrt(2.0 * 6.0 * 6.0), 0.001);
 
-    for (unsigned int i = 0; i < ln.size(); i++)
+    for (std::size_t i = 0; i < ln.size(); i++)
     {
         delete ln[i];
     }
